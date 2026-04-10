@@ -1,0 +1,78 @@
+apiVersion: numaflow.numaproj.io/v1alpha1
+kind: Pipeline
+metadata:
+  name: belt-stream
+  namespace: default
+
+spec:
+  interStepBufferServiceName: default-isb
+
+  vertices:
+    # ── Kafka Source ─────────────────────────────────────────────────────────
+    - name: kafka-source
+      source:
+        kafka:
+          brokers:
+            - kafka.kafka.svc.cluster.local:9092 # Override via KAFKA_BROKER env if needed
+          topic: belt-data
+          consumerGroup: belt-ml-group
+        transformer:
+          container:
+            image: final-rul-model:latest
+            # ⚠ PRODUCTION: change imagePullPolicy to IfNotPresent and push to a
+            #   real registry (ECR / GCR). Use a pinned tag, not :latest.
+            imagePullPolicy: IfNotPresent
+            args: ["python", "app/source_transformer.py"]
+            env:
+              - name: ELASTIC_URL
+                value: "http://elasticsearch.elastic.svc.cluster.local:9200"
+      scale:
+        min: 1
+        max: 10 # Match your Kafka partition count; scale-out is safe (stateless transformer)
+
+    # ── ML Runtime UDF ───────────────────────────────────────────────────────
+    - name: ml-runtime
+      volumes: # ← vertex-level: correct Numaflow CRD field
+        - name: thresholds-config
+          configMap:
+            name: belt-thresholds
+      udf:
+        container:
+          image: final-rul-model:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ELASTIC_URL
+              value: "http://elasticsearch.elastic.svc.cluster.local:9200"
+            - name: THRESHOLDS_PATH
+              value: "/config/thresholds.json"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            # Sized for two RF .pkl models (~100-200 MB each) + inference overhead.
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          volumeMounts:
+            - name: thresholds-config
+              mountPath: /config
+              readOnly: true
+      scale:
+        min: 1 # Use 1 for Minikube; set to 2 in production for HA
+        max: 10 # Numaflow auto-scales based on ISB backpressure
+
+    # ── Kafka Sink ───────────────────────────────────────────────────────────
+    - name: kafka-output
+      sink:
+        kafka:
+          brokers:
+            - kafka.kafka.svc.cluster.local:9092
+          topic: belt-predictions
+
+  edges:
+    - from: kafka-source
+      to: ml-runtime
+    - from: ml-runtime
+      to: kafka-output

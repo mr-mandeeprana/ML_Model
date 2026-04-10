@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-config
+  namespace: elastic
+data:
+  logstash.conf: |
+    input {
+      kafka {
+        bootstrap_servers => "kafka.kafka.svc.cluster.local:9092"
+        topics => ["belt-predictions", "belt-data"]
+        group_id => "logstash-group"
+        codec => "json"
+        auto_offset_reset => "earliest"
+        decorate_events => true
+      }
+    }
+
+    filter {
+      if [@metadata][kafka][topic] == "belt-predictions" {
+        mutate { add_field => { "pipeline" => "belt-predictions" } }
+      } else if [@metadata][kafka][topic] == "belt-data" {
+        mutate { add_field => { "pipeline" => "belt-raw-archival" } }
+      }
+    }
+
+    output {
+      if [pipeline] == "belt-predictions" {
+        elasticsearch {
+          hosts => ["http://elasticsearch.elastic.svc.cluster.local:9200"]
+          index => "belt-index"
+        }
+      } else if [pipeline] == "belt-raw-archival" {
+        elasticsearch {
+          hosts => ["http://elasticsearch.elastic.svc.cluster.local:9200"]
+          index => "belt-raw-data"
+        }
+      }
+      stdout { codec => rubydebug }
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  namespace: elastic
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      containers:
+        - name: logstash
+          image: docker.elastic.co/logstash/logstash:8.11.1
+          ports:
+            - containerPort: 5044
+          volumeMounts:
+            - name: config
+              mountPath: /usr/share/logstash/pipeline
+      volumes:
+        - name: config
+          configMap:
+            name: logstash-config

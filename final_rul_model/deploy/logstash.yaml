@@ -58,6 +58,9 @@ spec:
       containers:
         - name: logstash
           image: docker.elastic.co/logstash/logstash:8.11.1
+          env:
+            - name: LS_JAVA_OPTS
+              value: "-Xms256m -Xmx256m"
           ports:
             - containerPort: 5044
           volumeMounts:

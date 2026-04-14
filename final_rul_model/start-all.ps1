@@ -57,6 +57,7 @@ docker build -t final-rul-model:latest .
 kubectl apply -f .\deploy\zookeeper.yaml
 kubectl apply -f .\deploy\kafka.yaml
 kubectl apply -f .\deploy\elasticsearch.yaml
+kubectl apply -f .\deploy\thresholds-configmap.yaml
 kubectl apply -f .\deploy\kibana.yaml
 kubectl apply -f .\deploy\isb.yaml
 kubectl apply -f .\deploy\belt-pipeline.yaml

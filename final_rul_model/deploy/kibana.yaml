@@ -21,6 +21,13 @@ spec:
           env:
             - name: ELASTICSEARCH_HOSTS
               value: http://elasticsearch:9200
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=512"
+          resources:
+            requests:
+              memory: "512Mi"
+            limits:
+              memory: "768Mi"
 ---
 apiVersion: v1
 kind: Service

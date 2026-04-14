@@ -1,6 +1,4 @@
 pynumaflow==0.12.1
-grpcio==1.62.1
-protobuf==4.25.3
 numpy==1.26.4
 pandas==2.2.2
 joblib==1.4.2

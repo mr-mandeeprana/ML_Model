@@ -27,8 +27,15 @@ class InferenceEngine:
         if not path.exists():
             logger.error(f"Model file not found: {path}")
             return None
+        
+        import time
+        start_time = time.time()
         try:
-            return joblib.load(path)
+            model = joblib.load(path)
+            duration = time.time() - start_time
+            size_mb = path.stat().st_size / (1024 * 1024)
+            logger.info(f"Loaded model {filename} ({size_mb:.1f} MB) in {duration:.2f}s")
+            return model
         except Exception as e:
             logger.error(f"Error loading {path}: {e}")
             return None

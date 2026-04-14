@@ -21,4 +21,4 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Run the gRPC server
-ENTRYPOINT ["python", "app/udf_entry.py"]
+CMD ["python", "app/udf_entry.py"]

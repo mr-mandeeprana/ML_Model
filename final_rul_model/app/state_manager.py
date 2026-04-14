@@ -1,6 +1,7 @@
 # app/state_manager.py
 
 import logging
+import numpy as np
 from collections import deque
 from typing import Dict, Any, List, Optional
 
@@ -56,7 +57,6 @@ class StateManager:
         
         # Take the last N elements
         data = list(buffer)[-window_minutes:]
-        import numpy as np
         return {
             "mean": float(np.mean(data)),
             "std": float(np.std(data)),

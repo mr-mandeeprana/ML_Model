@@ -1,22 +1,32 @@
 {
-    "belt_id": 1,
-    "manufacture_date": "2025-08-01",
-    "install_date": "2025-11-11",
-    "replace_date": "2031-08-03",
-    "manufacture_hardness_min": 80,
-    "manufacture_hardness_max": 80.5,
-    "install_hardness_min": 81,
-    "install_hardness_max": 82,
-    "end_hardness_min": 94,
-    "end_hardness_max": 97,
-    "mechanical_params": {
-        "tail_limit_mm": 190,
-        "tail_crowning_mm": 0.5,
-        "head_crowning_mm": 1.75,
-        "belt_running_mm": 47.5,
-        "discharge_lip_bad": 1,
-        "gearbox_issue": 1,
-        "bucket_fixing_issue": 1,
-        "belt_joint_attention": 1
-    }
+  "belt_id": 1,
+
+  "manufacture_date": "2025-08-01",
+  "installation_date": "2025-11-11",
+  "replace_date": "2031-08-03",
+
+  "manufacture_hardness_min": 80.0,
+  "manufacture_hardness_max": 80.5,
+
+  "installation_hardness_min": 81.0,
+  "installation_hardness_max": 82.0,
+
+  "end_hardness_min": 94.0,
+  "end_hardness_max": 97.0,
+
+  "installation_hardness": 81.5,
+  "failure_shore_hardness": 95.5,
+
+  "planned_lifecycle_months": 72,
+
+  "mechanical_params": {
+    "tail_limit_mm": 190,
+    "tail_crowning_mm": 0.5,
+    "head_crowning_mm": 1.75,
+    "belt_running_mm": 47.5,
+    "discharge_lip_bad": 1,
+    "gearbox_issue": 1,
+    "bucket_fixing_issue": 1,
+    "belt_joint_attention": 1
+  }
 }

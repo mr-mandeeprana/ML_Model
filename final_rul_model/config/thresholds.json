@@ -1,65 +1,61 @@
 {
+  "baseline_values": {
+    "baseline_rul_days": 2190.0,
+    "baseline_temp_celsius": 60.0,
+    "baseline_elongation": 280.0,
+    "baseline_rul_months": 72,
+    "expected_health_mean": 70.0,
+    "new_belt_health_score": 100.0,
+    "replacement_health_score": 40.0
+  },
+  "sensor_thresholds": {
+    "temperature_boot_material/temperature": {
+      "warning": 90.0,
+      "critical": 100.0
+    },
+    "current_transducer_head/current": {
+      "warning": 62.0,
+      "critical": 80.0
+    },
+    "ultrasonic_boot/elongation": {
+      "warning": 300.0,
+      "critical": 310.0
+    }
+  },
   "health_score_thresholds": {
-    "critical": 55.0,
+    "critical": 50.0,
     "warning": 65.0,
     "maintenance_due": 75.0,
     "good": 85.0,
     "excellent": 90.0
   },
   "rul_thresholds": {
-    "critical_days": 180,
-    "warning_days": 540,
-    "maintenance_due_days": 1080,
-    "critical_percentage": 15.0,
-    "warning_percentage": 35.0,
-    "maintenance_due_percentage": 60.0
-  },
-  "sensor_limits": {
-    "temperature_boot_material/temperature": {
-      "min": 50,
-      "max": 120,
-      "comment": "Material temperature sensor - Actual range 50-120°C"
-    },
-    "ultrasonic_boot/elongation": {
-      "min": 40,
-      "max": 340,
-      "comment": "Belt elongation sensor - Actual operational range 40-340mm"
-    },
-    "current_transducer_head/current": {
-      "min": 0,
-      "max": 70,
-      "comment": "Motor current sensor - Actual max 70A"
-    }
-  },
-  "sensor_warning_critical": {
-    "temperature_boot_material/temperature": {
-      "warning": 90,
-      "critical": 100,
-      "comment": "Temperature in Celsius - Warning at 90°C, Critical at 100°C"
-    },
-    "ultrasonic_boot/elongation": {
-      "warning": 300,
-      "critical": 310,
-      "comment": "Elongation in mm - Warning at 300mm, Critical at 310mm"
-    },
-    "current_transducer_head/current": {
-      "warning": 62,
-      "critical": 70,
-      "comment": "Current in Amperes - Warning at 62A, Critical at 70A"
-    }
+    "critical_days": 90.0,
+    "warning_days": 180.0,
+    "maintenance_due_days": 1080
   },
   "operational_states": {
     "idle_current_threshold": 4.5,
-    "normal_current_min": 4.5,
-    "normal_current_max": 60,
-    "high_load_threshold": 62,
-    "overload_threshold": 70,
-    "comment": "Current thresholds in Amperes - Idle if current < 4.5A (based on data), Max system current is 70A"
+    "high_load_threshold": 62.0,
+    "overload_threshold": 70.0
   },
   "idle_detection": {
     "enabled": true,
-    "current_threshold": 4.5,
-    "comment": "Idle state: current < 4.5A (planned stop). Effective days accumulation pauses during idle."
+    "current_threshold": 4.5
+  },
+  "sensor_warning_critical": {
+    "temperature_boot_material/temperature": {
+      "warning": 90.0,
+      "critical": 100.0
+    },
+    "ultrasonic_boot/elongation": {
+      "warning": 300.0,
+      "critical": 310.0
+    },
+    "current_transducer_head/current": {
+      "warning": 62.0,
+      "critical": 70.0
+    }
   },
   "physics_model": {
     "enabled": true,
@@ -73,54 +69,23 @@
     "temp_ref_celsius": 20.0,
     "arrhenius_reference_mode": "csv_running_mean",
     "enforce_baseline_rul_cap": true,
-    "arrhenius_ema_span": 240,
-    "comment": "degradation_model can be 'power_law' (default) or 'second_order' (NR/EPDM hardening kinetics). Power-law uses ΔShore = k * t_eff^n. Arrhenius uses config constants (activation energy, gas constant). arrhenius_reference_mode='csv_running_mean' uses cumulative material-temperature history as a dynamic baseline so thermal effects remain active and stable. enforce_baseline_rul_cap=true hard-caps physics RUL at baseline_rul_days."
-  },
-  "second_order": {
-    "enabled": false,
-    "ln_pre_exponential": -6.1022,
-    "activation_energy_kj_mol": 22.78,
-    "hardness_ceiling": 100.0,
-    "comment": "Optional NR/EPDM-inspired second-order hardening model: dH/dt = k(T) * (H_inf - H)^2 with k(T)=exp(lnA - Ea/(R*T)). Enable and set physics_model.degradation_model='second_order' to activate."
-  },
-  "arrhenius": {
-    "activation_energy_kj_mol": 60.0,
-    "gas_constant_j_mol_k": 8.314,
-    "reference_temp_celsius": 20.0,
-    "comment": "Arrhenius thermal acceleration: faster aging at higher temperatures"
+    "arrhenius_ema_span": 240
   },
   "ml_fusion": {
     "ml_penalty_weight": 1.0,
     "max_penalty": 40.0,
     "min_rul_factor": 0.60,
-    "max_rul_factor": 1.00,
-    "comment": "ML penalty [0, 40] reduces physics health and RUL. Factor clips between 0.60-1.0"
+    "max_rul_factor": 1.00
   },
   "data_quality": {
     "max_missing_percentage": 5.0,
     "min_samples_per_day": 1000,
     "outlier_std_multiplier": 3.0,
     "min_sensor_uptime_percentage": 100.0,
-    "required_sensors": ["temperature_boot_material/temperature", "ultrasonic_boot/elongation", "current_transducer_head/current"],
-    "comment": "Data quality thresholds for validation and confidence scoring"
-  },
-  "prediction_confidence": {
-    "high_confidence_min_samples": 10000,
-    "medium_confidence_min_samples": 5000,
-    "low_confidence_max_samples": 5000,
-    "high_confidence_max_missing": 2.0,
-    "medium_confidence_max_missing": 5.0,
-    "low_confidence_max_missing": 10.0,
-    "comment": "Thresholds for prediction confidence scoring"
-  },
-  "baseline_values": {
-    "baseline_rul_months": 72,
-    "baseline_rul_days": 2190,
-    "expected_health_mean": 70.0,
-    "new_belt_health_score": 100.0,
-    "replacement_health_score": 40.0,
-    "baseline_elongation": 280,
-    "baseline_temp_celsius": 60.0,
-    "comment": "Baseline values for RUL calculation - 72 months = 6 years standard life"
+    "required_sensors": [
+      "temperature_boot_material/temperature",
+      "ultrasonic_boot/elongation",
+      "current_transducer_head/current"
+    ]
   }
 }

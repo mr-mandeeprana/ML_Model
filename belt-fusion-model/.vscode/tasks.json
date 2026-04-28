@@ -1,0 +1,19 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run belt failure training pipeline",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-m",
+				"ml_model.run_standalone"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		}
+	]
+}

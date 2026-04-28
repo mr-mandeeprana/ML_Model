@@ -7,90 +7,95 @@ metadata:
     app: belt-ml-runtime
     component: thresholds
 data:
-  # ── belt thresholds ─────────────────────────────────────────────────────────
-  # Edit values here and run:
-  #   kubectl apply -f deploy/thresholds-configmap.yaml
-  # The ml-runtime pods will pick up the change within ~60 seconds automatically
-  # (no image rebuild or rollout restart required).
   thresholds.json: |
     {
+      "baseline_values": {
+        "baseline_rul_days": 2190.0,
+        "baseline_temp_celsius": 60.0,
+        "baseline_elongation": 280.0,
+        "baseline_rul_months": 72,
+        "expected_health_mean": 70.0,
+        "new_belt_health_score": 100.0,
+        "replacement_health_score": 40.0
+      },
+      "sensor_thresholds": {
+        "temperature_boot_material/temperature": {
+          "warning": 90.0,
+          "critical": 100.0
+        },
+        "current_transducer_head/current": {
+          "warning": 62.0,
+          "critical": 80.0
+        },
+        "ultrasonic_boot/elongation": {
+          "warning": 300.0,
+          "critical": 310.0
+        }
+      },
       "health_score_thresholds": {
-        "critical": 55.0,
+        "critical": 50.0,
         "warning": 65.0,
         "maintenance_due": 75.0,
         "good": 85.0,
         "excellent": 90.0
       },
       "rul_thresholds": {
-        "critical_days": 180,
-        "warning_days": 540,
-        "maintenance_due_days": 1080,
-        "critical_percentage": 15.0,
-        "warning_percentage": 35.0,
-        "maintenance_due_percentage": 60.0
-      },
-      "sensor_limits": {
-        "temperature_boot_material/temperature":            {"min": 50,  "max": 120},
-        "ultrasonic_boot/elongation":                      {"min": 40,  "max": 340},
-        "current_transducer_head/current":                 {"min": 0,   "max": 70},
-        "zero_speed_switch_boot/underspeed":               {"min": 0,   "max": 1},
-        "fill_level_indicator_boot/FillLevelIndicator":    {"min": 0,   "max": 1},
-        "belt_misalignment_boot_left_alarm/BottomLeftAlarmType":    {"min": 0, "max": 1},
-        "belt_misalignment_boot_left_trip/BottomLeftTripType":      {"min": 0, "max": 1},
-        "belt_misalignment_boot_right_alarm/BottomRightAlarmType":  {"min": 0, "max": 1},
-        "belt_misalignment_boot_right_trip/BottomRightTripType":    {"min": 0, "max": 1},
-        "belt_misalignment_head_left_alarm/TopLeftAlarmType":       {"min": 0, "max": 1},
-        "belt_misalignment_head_left_trip/TopLeftTripType":         {"min": 0, "max": 1},
-        "belt_misalignment_head_right_alarm/TopRightAlarmType":     {"min": 0, "max": 1},
-        "belt_misalignment_head_right_trip/TopRightTripType":       {"min": 0, "max": 1}
-      },
-      "sensor_warning_critical": {
-        "belt_misalignment_boot_left_alarm/BottomLeftAlarmType":    {"warning": 0},
-        "belt_misalignment_boot_left_trip/BottomLeftTripType":      {"critical": 0},
-        "belt_misalignment_boot_right_alarm/BottomRightAlarmType":  {"warning": 0},
-        "belt_misalignment_boot_right_trip/BottomRightTripType":    {"critical": 0},
-        "belt_misalignment_head_left_alarm/TopLeftAlarmType":       {"warning": 0},
-        "belt_misalignment_head_left_trip/TopLeftTripType":         {"critical": 0},
-        "belt_misalignment_head_right_alarm/TopRightAlarmType":     {"warning": 0},
-        "belt_misalignment_head_right_trip/TopRightTripType":       {"critical": 0},
-        "current_transducer_head/current":                          {"warning": 62, "critical": 70},
-        "fill_level_indicator_boot/FillLevelIndicator":             {"critical": 0},
-        "temperature_boot_material/temperature":                    {"warning": 90, "critical": 100},
-        "ultrasonic_boot/elongation":                               {"warning": 300, "critical": 310},
-        "zero_speed_switch_boot/underspeed":                        {"critical": 0}
+        "critical_days": 90.0,
+        "warning_days": 180.0,
+        "maintenance_due_days": 1080
       },
       "operational_states": {
         "idle_current_threshold": 4.5,
-        "normal_current_min": 4.5,
-        "normal_current_max": 60,
-        "high_load_threshold": 62,
-        "overload_threshold": 70
+        "high_load_threshold": 62.0,
+        "overload_threshold": 70.0
       },
       "idle_detection": {
         "enabled": true,
-        "zero_speed_value": 0,
-        "max_idle_current": 4.5
+        "current_threshold": 4.5
+      },
+      "sensor_warning_critical": {
+        "temperature_boot_material/temperature": {
+          "warning": 90.0,
+          "critical": 100.0
+        },
+        "ultrasonic_boot/elongation": {
+          "warning": 300.0,
+          "critical": 310.0
+        },
+        "current_transducer_head/current": {
+          "warning": 62.0,
+          "critical": 70.0
+        }
+      },
+      "physics_model": {
+        "enabled": true,
+        "degradation_model": "power_law",
+        "k": 2.0243,
+        "n": 0.7809,
+        "h_install": 81.0,
+        "h_fail": 95.0,
+        "elongation_weight": 0.35,
+        "temp_elong_coupling_weight": 0.15,
+        "temp_ref_celsius": 20.0,
+        "arrhenius_reference_mode": "csv_running_mean",
+        "enforce_baseline_rul_cap": true,
+        "arrhenius_ema_span": 240
+      },
+      "ml_fusion": {
+        "ml_penalty_weight": 1.0,
+        "max_penalty": 40.0,
+        "min_rul_factor": 0.60,
+        "max_rul_factor": 1.00
       },
       "data_quality": {
         "max_missing_percentage": 5.0,
         "min_samples_per_day": 1000,
         "outlier_std_multiplier": 3.0,
-        "min_sensor_uptime_percentage": 100.0
-      },
-      "prediction_confidence": {
-        "high_confidence_min_samples": 10000,
-        "medium_confidence_min_samples": 5000,
-        "low_confidence_max_samples": 5000,
-        "high_confidence_max_missing": 2.0,
-        "medium_confidence_max_missing": 5.0,
-        "low_confidence_max_missing": 10.0
-      },
-      "baseline_values": {
-        "baseline_rul_months": 72,
-        "baseline_rul_days": 2190,
-        "expected_health_mean": 70.0,
-        "new_belt_health_score": 100.0,
-        "replacement_health_score": 40.0,
-        "baseline_elongation": 280
+        "min_sensor_uptime_percentage": 100.0,
+        "required_sensors": [
+          "temperature_boot_material/temperature",
+          "ultrasonic_boot/elongation",
+          "current_transducer_head/current"
+        ]
       }
     }

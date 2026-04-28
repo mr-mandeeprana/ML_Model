@@ -1,6 +1,9 @@
 param(
     [switch]$UseVenv = $true,
     [string]$PythonPath = "",
+    [string]$RawData = "",
+    [switch]$Force = $false,
+    [switch]$MlOnly = $true,
     [switch]$ContinueOnError = $false
 )
 
@@ -85,8 +88,17 @@ Write-Host ("Workspace: " + $root)
 Write-Host ("Python: " + $pythonExe)
 Write-Host ("Log file: " + $logFile)
 
-Invoke-Step -Title "STEP 1/2 - ML MODEL TRAINING AND PREDICTION" -Arguments @("-m", "ml_model.run_standalone")
-Invoke-Step -Title "STEP 2/2 - FINAL ML RESULT REPORT" -Arguments @("main.py")
+$trainingArgs = @("-m", "ml_model.run_standalone")
+if ($RawData) { $trainingArgs += "--raw-data", $RawData }
+if ($MlOnly) { $trainingArgs += "--ml-only" }
+$trainingArgs += "--prediction-window", "100"
+Invoke-Step -Title "STEP 1/2 - ML MODEL TRAINING AND PREDICTION" -Arguments $trainingArgs
+
+$reportArgs = @("main.py")
+if ($RawData) { $reportArgs += "--raw-data", $RawData }
+if ($Force) { $reportArgs += "--force-preprocess" }
+if ($MlOnly) { $reportArgs += "--ml-only" }
+Invoke-Step -Title "STEP 2/2 - FINAL ML RESULT REPORT" -Arguments $reportArgs
 
 Write-Banner "PIPELINE COMPLETED"
 Write-Host "All requested stages executed."

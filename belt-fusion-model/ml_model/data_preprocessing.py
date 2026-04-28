@@ -1,32 +1,65 @@
 """
 Data Preprocessing Module
-Loading, cleaning, and validating sensor data for model training.
+Loads, validates, cleans, and aligns raw sensor data for ML training.
 """
 
-import pandas as pd
-import numpy as np
-from pathlib import Path
+from __future__ import annotations
+
 import json
 import logging
+from pathlib import Path
+from typing import Dict, List
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import numpy as np
+import pandas as pd
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+
 class DataPreprocessor:
-    def __init__(self, config_path: str = "config/thresholds.json"):
+    """
+    Prepares raw long-format sensor data for downstream feature engineering.
+
+    Expected input columns:
+    - sensorid
+    - @timestamp
+    - avg_value
+
+    Optional columns:
+    - max_value
+    - min_value
+    - std_deviation
+    """
+
+    CORE_SENSORS = [
+        "temperature_boot_material/temperature",
+        "ultrasonic_boot/elongation",
+        "current_transducer_head/current",
+    ]
+
+    def __init__(self, config_path: str = "config/thresholds.json", resample_freq: str = "1min") -> None:
         self.config_path = Path(config_path)
+        self.resample_freq = resample_freq
         self.thresholds = self._load_config()
 
-    def _load_config(self) -> dict:
+    def _load_config(self) -> Dict:
         if not self.config_path.exists():
-            logger.warning(f"Config not found at {self.config_path}. Using empty defaults.")
+            logger.warning("Config not found at %s. Using empty defaults.", self.config_path)
             return {}
+
         try:
-            with open(self.config_path, 'r') as f:
+            with open(self.config_path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading config: {e}")
+        except Exception as exc:
+            logger.error("Error loading config from %s: %s", self.config_path, exc)
             raise
+
+    def _validate_columns(self, df: pd.DataFrame) -> None:
+        required_cols = ["sensorid", "@timestamp", "avg_value"]
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
 
     def load_sensor_data(self, file_path: str) -> pd.DataFrame:
         path = Path(file_path)
@@ -34,80 +67,136 @@ class DataPreprocessor:
             raise FileNotFoundError(f"Data file not found: {file_path}")
 
         try:
-            df = pd.read_csv(file_path)
-        except Exception as e:
-            raise ValueError(f"Failed to read CSV: {e}")
+            df = pd.read_csv(path, on_bad_lines="skip")
+        except Exception as exc:
+            raise ValueError(f"Failed to read CSV: {exc}") from exc
 
-        # Keep only the 3 core sensors
-        core_sensors = [
-            'temperature_boot_material/temperature',
-            'ultrasonic_boot/elongation',
-            'current_transducer_head/current'
-        ]
-        df = df[df['sensorid'].isin(core_sensors)].copy()
-        
+        self._validate_columns(df)
+
+        df["sensorid"] = df["sensorid"].astype(str).str.strip()
+        df = df[df["sensorid"].isin(self.CORE_SENSORS)].copy()
+
         if df.empty:
-            raise ValueError("No core sensor data found. Required sensors: " + ", ".join(core_sensors))
+            raise ValueError(
+                "No valid core sensor data found. Required sensors: "
+                + ", ".join(self.CORE_SENSORS)
+            )
 
-        required_cols = ['sensorid', '@timestamp', 'avg_value']
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        
-        if missing_cols:
-             raise ValueError(f"Missing critical columns: {missing_cols}")
-             
-        df['@timestamp'] = pd.to_datetime(df['@timestamp'], errors='coerce')
-        df = df.dropna(subset=['@timestamp'])
+        df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors="coerce", utc=True)
+        df = df.dropna(subset=["@timestamp"])
 
-        df['avg_value'] = pd.to_numeric(df['avg_value'], errors='coerce')
-        
-        for sensor in core_sensors:
-            mask = df['sensorid'] == sensor
-            if mask.any():
-                df.loc[mask, 'avg_value'] = df.loc[mask, 'avg_value'].fillna(
-                    df.loc[mask, 'avg_value'].median()
-                )
+        numeric_cols = ["avg_value", "min_value", "max_value", "std_deviation"]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        return df.sort_values(['@timestamp', 'sensorid'])
+        df = df.dropna(subset=["avg_value"])
+
+        return df.sort_values(["@timestamp", "sensorid"]).reset_index(drop=True)
 
     def clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        df = df.drop_duplicates(subset=['@timestamp', 'sensorid'])
-        
-        sensor_limits = self.thresholds.get('sensor_limits', {})
-        
-        for sensor_key, limits in sensor_limits.items():
-            min_val = limits.get('min', -np.inf)
-            max_val = limits.get('max', np.inf)
-            
-            mask = df['sensorid'].str.contains(sensor_key.split('/')[0], regex=False)
-            
-            if mask.any():
-                valid_value_mask = (df['avg_value'] >= min_val) & (df['avg_value'] <= max_val)
-                df = df[~mask | valid_value_mask]
-        
-        logger.info(f"Cleaned {len(df)} rows remaining (removed out-of-range values)")
-        return df
+        df = df.copy()
 
-    def fill_missing_values(self, df: pd.DataFrame) -> pd.DataFrame:
-        df = df.sort_values(['sensorid', '@timestamp'])
-        
-        cols_to_fill = ['avg_value']
-        df[cols_to_fill] = df.groupby('sensorid')[cols_to_fill].ffill()
-        df[cols_to_fill] = df.groupby('sensorid')[cols_to_fill].bfill()
-        
-        for sensor in df['sensorid'].unique():
-            mask = df['sensorid'] == sensor
-            sensor_median = df.loc[mask, 'avg_value'].median()
-            df.loc[mask & df['avg_value'].isna(), 'avg_value'] = sensor_median
-        
-        return df.sort_values(['@timestamp', 'sensorid'])
+        before = len(df)
+        df = df.drop_duplicates(subset=["sensorid", "@timestamp"], keep="last")
+
+        sensor_thresholds = self.thresholds.get("sensor_thresholds", {})
+        cleaned_parts: List[pd.DataFrame] = []
+
+        for sensor in self.CORE_SENSORS:
+            sensor_df = df[df["sensorid"] == sensor].copy()
+            if sensor_df.empty:
+                continue
+
+            limits = sensor_thresholds.get(sensor, {})
+            min_val = limits.get("min", -np.inf)
+            max_val = limits.get("max", np.inf)
+
+            sensor_df = sensor_df[
+                sensor_df["avg_value"].between(min_val, max_val, inclusive="both")
+            ].copy()
+
+            cleaned_parts.append(sensor_df)
+
+        if not cleaned_parts:
+            raise ValueError("All rows were removed during cleaning.")
+
+        cleaned_df = pd.concat(cleaned_parts, ignore_index=True)
+        cleaned_df = cleaned_df.sort_values(["@timestamp", "sensorid"]).reset_index(drop=True)
+
+        logger.info(
+            "Cleaning complete: kept %d/%d rows after duplicates and range filtering.",
+            len(cleaned_df),
+            before,
+        )
+        return cleaned_df
+
+    def resample_to_minute_grid(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Resample each core sensor to a consistent 1-minute grid.
+        This keeps long-format output, which matches the next pipeline stage.
+        """
+        parts: List[pd.DataFrame] = []
+
+        for sensor in self.CORE_SENSORS:
+            sensor_df = df[df["sensorid"] == sensor].copy()
+            if sensor_df.empty:
+                logger.warning("Missing sensor in cleaned data: %s", sensor)
+                continue
+
+            sensor_df = sensor_df.sort_values("@timestamp").set_index("@timestamp")
+
+            resampled = sensor_df[["avg_value"]].resample(self.resample_freq).mean()
+
+            if "min_value" in sensor_df.columns:
+                resampled["min_value"] = sensor_df["min_value"].resample(self.resample_freq).mean()
+            else:
+                resampled["min_value"] = np.nan
+
+            if "max_value" in sensor_df.columns:
+                resampled["max_value"] = sensor_df["max_value"].resample(self.resample_freq).mean()
+            else:
+                resampled["max_value"] = np.nan
+
+            if "std_deviation" in sensor_df.columns:
+                resampled["std_deviation"] = sensor_df["std_deviation"].resample(self.resample_freq).mean()
+            else:
+                resampled["std_deviation"] = np.nan
+
+            resampled["avg_value"] = resampled["avg_value"].interpolate(limit_direction="both")
+            resampled["min_value"] = resampled["min_value"].interpolate(limit_direction="both")
+            resampled["max_value"] = resampled["max_value"].interpolate(limit_direction="both")
+            resampled["std_deviation"] = resampled["std_deviation"].fillna(0.0)
+
+            resampled["sensorid"] = sensor
+            resampled = resampled.reset_index()
+
+            parts.append(resampled)
+
+        if not parts:
+            raise ValueError("No sensor data available after resampling.")
+
+        out = pd.concat(parts, ignore_index=True)
+        out = out.sort_values(["@timestamp", "sensorid"]).reset_index(drop=True)
+        return out
+
+    def validate_sensor_coverage(self, df: pd.DataFrame) -> None:
+        present = set(df["sensorid"].unique())
+        missing = [sensor for sensor in self.CORE_SENSORS if sensor not in present]
+        if missing:
+            raise ValueError(f"Missing required sensors after preprocessing: {missing}")
 
     def preprocess(self, file_path: str) -> pd.DataFrame:
-        logger.info("Starting preprocessing...")
+        logger.info("Starting preprocessing for %s", file_path)
+
         df = self.load_sensor_data(file_path)
-        logger.info(f"Loaded {len(df)} rows from {len(df['sensorid'].unique())} sensors.")
-        
+        self.validate_sensor_coverage(df)
+
         df = self.clean_data(df)
-        df = self.fill_missing_values(df)
-        
-        logger.info("Preprocessing complete.")
+        self.validate_sensor_coverage(df)
+
+        df = self.resample_to_minute_grid(df)
+        self.validate_sensor_coverage(df)
+
+        logger.info("Preprocessing complete. Final rows: %d", len(df))
         return df

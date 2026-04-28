@@ -1,69 +1,84 @@
-# app/state_manager.py
+"""
+State Manager
+Maintains rolling in-memory buffers for streaming feature generation.
+"""
+
+from __future__ import annotations
 
 import logging
-import numpy as np
 from collections import deque
-from typing import Dict, Any, List, Optional
+from typing import Any, Deque, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+
 class StateManager:
-    """
-    Manages persistent state for belts.
-    Currently in-memory (local dict), but structured for Redis integration.
-    """
-    def __init__(self):
-        # In-memory store: { belt_id: { state_data } }
-        self._store: Dict[str, Dict[str, Any]] = {}
-        
-        # Max buffer size for 24h of data (sampled at 1 min)
-        self.MAX_BUFFER_SIZE = 1440 
+    def __init__(self, maxlen: int = 1440) -> None:
+        """
+        maxlen=1440 keeps up to 24 hours of 1-minute data.
+        """
+        self.maxlen = maxlen
 
-    def get_state(self, belt_id: str) -> Dict[str, Any]:
-        if belt_id not in self._store:
-            # Initialize default state for new belt
-            self._store[belt_id] = {
-                "belt_id": belt_id,
-                "operating_hours": 0.0,
-                "rolling_buffers": {}, # { sensor_id: deque([values]) }
-                "last_prediction_timestamp": None,
-                "health_score": 100.0,
-                "rul_days": 2190.0
-            }
-        return self._store[belt_id]
+        self.temperature: Deque[float] = deque(maxlen=maxlen)
+        self.elongation: Deque[float] = deque(maxlen=maxlen)
+        self.current: Deque[float] = deque(maxlen=maxlen)
 
-    def save_state(self, belt_id: str, state: Dict[str, Any]):
-        self._store[belt_id] = state
+        self.last_timestamp: Optional[str] = None
+        self.last_sensorid: Optional[str] = None
+        self.total_events: int = 0
 
-    def update_buffer(self, belt_id: str, sensor_id: str, value: float):
-        state = self.get_state(belt_id)
-        buffers = state.setdefault("rolling_buffers", {})
-        
-        if sensor_id not in buffers:
-            buffers[sensor_id] = deque(maxlen=self.MAX_BUFFER_SIZE)
-        
-        # If it's a deque (deserialized from JSON or newly created), append
-        if not isinstance(buffers[sensor_id], deque):
-            buffers[sensor_id] = deque(buffers[sensor_id], maxlen=self.MAX_BUFFER_SIZE)
-            
-        buffers[sensor_id].append(value)
+    def _append_value(self, sensorid: str, value: float) -> None:
+        if sensorid == "temperature_boot_material/temperature":
+            self.temperature.append(value)
+        elif sensorid == "ultrasonic_boot/elongation":
+            self.elongation.append(value)
+        elif sensorid == "current_transducer_head/current":
+            self.current.append(value)
 
-    def get_buffer_stats(self, belt_id: str, sensor_id: str, window_minutes: int) -> Dict[str, float]:
-        state = self.get_state(belt_id)
-        buffer = state.get("rolling_buffers", {}).get(sensor_id)
-        
-        if not buffer or len(buffer) == 0:
-            return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0}
-        
-        # Take the last N elements
-        data = list(buffer)[-window_minutes:]
-        return {
-            "mean": float(np.mean(data)),
-            "std": float(np.std(data)),
-            "min": float(np.min(data)),
-            "max": float(np.max(data))
+    def _is_ready(self) -> bool:
+        """
+        Require enough history for stable feature generation.
+        Minimum useful threshold: at least 30 values for each sensor.
+        """
+        return (
+            len(self.temperature) >= 30
+            and len(self.elongation) >= 30
+            and len(self.current) >= 30
+        )
+
+    def update(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update rolling state with one incoming event.
+
+        Expected event:
+        {
+            "sensorid": "...",
+            "@timestamp": "...",
+            "avg_value": ...
+        }
+        """
+        sensorid = str(event.get("sensorid", "")).strip()
+        timestamp = event.get("@timestamp")
+
+        try:
+            value = float(event.get("avg_value", 0.0))
+        except Exception:
+            value = 0.0
+
+        self._append_value(sensorid, value)
+
+        self.last_timestamp = timestamp
+        self.last_sensorid = sensorid
+        self.total_events += 1
+
+        state = {
+            "temperature": list(self.temperature),
+            "elongation": list(self.elongation),
+            "current": list(self.current),
+            "last_timestamp": self.last_timestamp,
+            "last_sensorid": self.last_sensorid,
+            "total_events": self.total_events,
+            "ready": self._is_ready(),
         }
 
-    def increment_operating_hours(self, belt_id: str, hours: float = 1/60.0):
-        state = self.get_state(belt_id)
-        state["operating_hours"] = state.get("operating_hours", 0.0) + hours
+        return state

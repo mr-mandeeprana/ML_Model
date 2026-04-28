@@ -1,33 +1,56 @@
-# app/config_loader.py
+"""
+Config Loader
+Loads JSON configuration files for runtime usage.
+"""
+
+from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
-class ConfigLoader:
-    def __init__(self, config_dir: str = "config"):
-        self.config_dir = Path(config_dir)
 
-    def load_json(self, filename: str) -> Dict[str, Any]:
-        path = self.config_dir / filename
+class ConfigLoader:
+    def __init__(self):
+        base_dir = Path(__file__).resolve().parent.parent
+
+        self.thresholds_path = Path(
+            os.getenv("THRESHOLDS_PATH", str(base_dir / "config" / "thresholds.json"))
+        )
+        self.model_config_path = Path(
+            os.getenv("MODEL_CONFIG_PATH", str(base_dir / "config" / "model_config.json"))
+        )
+        self.metadata_path = Path(
+            os.getenv("BELT_METADATA_PATH", str(base_dir / "config" / "belts_metadata.json"))
+        )
+
+        self._thresholds = self._load_json(self.thresholds_path)
+        self._model_config = self._load_json(self.model_config_path)
+        self._metadata = self._load_json(self.metadata_path)
+
+        logger.info("ConfigLoader initialized.")
+
+    def _load_json(self, path: Path) -> Dict[str, Any]:
         if not path.exists():
             logger.warning(f"Config file not found: {path}")
             return {}
+
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            logger.error(f"Error loading {path}: {e}")
+            logger.error(f"Failed to load {path}: {e}")
             return {}
 
     def get_thresholds(self) -> Dict[str, Any]:
-        return self.load_json("thresholds.json")
+        return self._thresholds
 
     def get_model_config(self) -> Dict[str, Any]:
-        return self.load_json("model_config.json")
+        return self._model_config
 
     def get_metadata(self) -> Dict[str, Any]:
-        return self.load_json("belts_metadata.json")
+        return self._metadata

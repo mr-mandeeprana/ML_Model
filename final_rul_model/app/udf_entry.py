@@ -1,42 +1,43 @@
-# app/udf_entry.py
+"""
+Numaflow UDF Entry
+Connects incoming stream events to runtime processing logic.
+"""
 
-import sys
 import json
-import traceback
-import grpc
-from pynumaflow.mapper import Messages, Message, Datum, MapServer
-from app.runtime import MLRuntime
+import logging
+import sys
 
-_runtime = None
+from app.runtime import RuntimeEngine
 
-def get_runtime():
-    global _runtime
-    if _runtime is None:
-        _runtime = MLRuntime()
-    return _runtime
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def handler(keys: list, datum: Datum) -> Messages:
+
+# Initialize runtime once (important for performance)
+runtime = RuntimeEngine()
+
+
+def process_line(line: str):
     try:
-        if not datum.value:
-            return Messages(Message.to_all(b"{}"))
+        event = json.loads(line.strip())
 
-        raw_event = json.loads(datum.value.decode("utf-8"))
-        result = get_runtime().process(raw_event)
+        # Process through runtime pipeline
+        result = runtime.process_event(event)
 
-        return Messages(Message(value=json.dumps(result).encode("utf-8")))
+        if result:
+            print(json.dumps(result), flush=True)
 
     except Exception as e:
-        error_payload = json.dumps({
-            "status": "error",
-            "message": str(e),
-            "trace": traceback.format_exc()
-        }).encode("utf-8")
-        return Messages(Message(value=error_payload))
+        logger.error(f"UDF processing error: {e}")
+
+
+def main():
+    """
+    Numaflow reads stdin and expects output on stdout
+    """
+    for line in sys.stdin:
+        process_line(line)
+
 
 if __name__ == "__main__":
-    print("Starting Final RUL Model UDF Server...")
-    try:
-        MapServer(handler).start()
-    except grpc.RpcError as e:
-        print(f"gRPC channel closed: {e}")
-        sys.exit(0)
+    main()

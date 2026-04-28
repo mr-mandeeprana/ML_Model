@@ -17,6 +17,9 @@ class IoTGateway:
         try:
             self.producer = KafkaProducer(
                 bootstrap_servers=bootstrap_servers,
+                api_version=(2, 5, 0),
+                acks='all',
+                retries=5,
                 value_serializer=lambda v: json.dumps(v).encode('utf-8')
             )
             logger.info(f"Connected to Kafka at {bootstrap_servers}")

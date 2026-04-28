@@ -1,74 +1,77 @@
-# app/runtime.py
+"""
+Runtime Engine
+Orchestrates streaming processing:
+state → features → inference → alerts
+"""
 
 import logging
-from datetime import datetime
+import os
 from typing import Dict, Any
-from app.config_loader import ConfigLoader
+
 from app.state_manager import StateManager
-from app.feature_engineering import FeatureEngineer
+from app.feature_engineering import FeatureBuilder
 from app.inference_engine import InferenceEngine
 from app.alert_engine import AlertEngine
+from app.config_loader import ConfigLoader
 
 logger = logging.getLogger(__name__)
 
-class MLRuntime:
-    def __init__(self):
-        self.config = ConfigLoader()
-        self.state_manager = StateManager()
-        
-        # Load configs
-        thresholds = self.config.get_thresholds()
-        model_cfg = self.config.get_model_config()
-        
-        # Initialize engines
-        self.feature_engineer = FeatureEngineer(thresholds, model_cfg)
-        self.inference_engine = InferenceEngine()
-        self.alert_engine = AlertEngine()
 
-    def process(self, raw_event: Dict[str, Any]) -> Dict[str, Any]:
-        """Processes a single sensor event and returns predictions."""
-        belt_id = raw_event.get("belt_id")
-        timestamp = raw_event.get("@timestamp") or raw_event.get("timestamp") or datetime.utcnow().isoformat()
-        
-        if not belt_id:
-            return {"status": "error", "message": "Missing belt_id"}
+class RuntimeEngine:
+    def __init__(self):
+        logger.info("Initializing Runtime Engine...")
+
+        # Load config
+        self.config = ConfigLoader()
+
+        # Core components
+        self.state_manager = StateManager()
+        self.feature_builder = FeatureBuilder(self.config)
+        self.inference_engine = InferenceEngine(
+            model_dir=os.getenv("MODEL_DIR", "models/saved_models")
+        )
+        self.alert_engine = AlertEngine(self.config)
+
+        logger.info("Runtime Engine ready.")
+
+    def process_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process one streaming event
+        """
 
         try:
-            # 1. Feature Engineering (Stateful)
-            feature_dict = self.feature_engineer.process_event(raw_event, self.state_manager)
-            feature_vector = self.feature_engineer.get_ordered_vector(feature_dict)
+            # 1. Update state
+            state = self.state_manager.update(event)
+
+            # If not enough data yet (cold start), skip
+            if not state.get("ready", False):
+                return None
+
+            # 2. Build features
+            features = self.feature_builder.build(state)
+
+            if features is None:
+                return None
+
+            # 3. Run inference
+            prediction = self.inference_engine.predict(features)
+
+            # 4. Generate alerts
+            result = self.alert_engine.apply(prediction)
+
+            # 5. Attach metadata and new ML signals
+            result["@timestamp"] = event.get("@timestamp")
+            result["sensorid"] = event.get("sensorid")
+            result["belt_id"] = event.get("belt_id", "belt-1")
             
-            # 2. Inference
-            prediction = self.inference_engine.predict(feature_vector)
-            
-            # 3. Alerting Logic
-            alert_status = self.alert_engine.evaluate(
-                prediction["health_score"], 
-                prediction["rul_days"]
-            )
-            
-            # 4. Update State with latest metrics
-            state = self.state_manager.get_state(belt_id)
-            state["health_score"] = prediction["health_score"]
-            state["rul_days"] = prediction["rul_days"]
-            state["risk_level"] = alert_status["risk_level"]
-            state["last_prediction_timestamp"] = timestamp
-            
-            # 5. Return combined result
-            return {
-                "belt_id": belt_id,
-                "@timestamp": timestamp,
-                "timestamp": timestamp,
-                "sensor_id": raw_event.get("sensorid"),
-                "health_score": prediction["health_score"],
-                "rul_days": prediction["rul_days"],
-                "risk_level": alert_status["risk_level"],
-                "is_critical": alert_status["is_critical"],
-                "is_warning": alert_status["is_warning"],
-                "status": "success",
-                "features_sampled": {k: feature_dict[k] for k in list(feature_dict.keys())[:5]} 
-            }
-            
+            # Propagation of rich ML metrics
+            result["confidence_level"] = prediction.get("confidence_level", "LOW")
+            result["prediction_status"] = prediction.get("prediction_status", "unknown")
+            result["failure_risk_score"] = prediction.get("failure_risk_score", 0.0)
+            result["early_failure_flag"] = prediction.get("early_failure_flag", 0)
+
+            return result
+
         except Exception as e:
-            logger.error(f"Runtime error processing belt {belt_id}: {e}")
-            return {"status": "error", "message": str(e), "belt_id": belt_id}
+            logger.error(f"Runtime processing failed: {e}")
+            return None

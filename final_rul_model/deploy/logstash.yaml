@@ -8,8 +8,16 @@ data:
     input {
       kafka {
         bootstrap_servers => "kafka.kafka.svc.cluster.local:9092"
-        topics => ["belt-predictions", "belt-data"]
-        group_id => "logstash-group"
+        topics => ["belt-data"]
+        group_id => "belt-logstash-group"
+        codec => "json"
+        auto_offset_reset => "earliest"
+        decorate_events => true
+      }
+      kafka {
+        bootstrap_servers => "kafka.kafka.svc.cluster.local:9092"
+        topics => ["belt-predictions"]
+        group_id => "belt-predictions-logstash-group"
         codec => "json"
         auto_offset_reset => "earliest"
         decorate_events => true
@@ -17,25 +25,30 @@ data:
     }
 
     filter {
-      if [@metadata][kafka][topic] == "belt-predictions" {
-        mutate { add_field => { "pipeline" => "belt-predictions" } }
-      } else if [@metadata][kafka][topic] == "belt-data" {
-        mutate { add_field => { "pipeline" => "belt-raw-archival" } }
+      if [@metadata][kafka][topic] == "belt-data" {
+        mutate {
+          add_field => { "pipeline" => "belt-raw-data" }
+        }
+      } else if [@metadata][kafka][topic] == "belt-predictions" {
+        mutate {
+          add_field => { "pipeline" => "belt-predictions" }
+        }
       }
     }
 
     output {
-      if [pipeline] == "belt-predictions" {
-        elasticsearch {
-          hosts => ["http://elasticsearch.elastic.svc.cluster.local:9200"]
-          index => "belt-index"
-        }
-      } else if [pipeline] == "belt-raw-archival" {
+      if [pipeline] == "belt-raw-data" {
         elasticsearch {
           hosts => ["http://elasticsearch.elastic.svc.cluster.local:9200"]
           index => "belt-raw-data"
         }
+      } else if [pipeline] == "belt-predictions" {
+        elasticsearch {
+          hosts => ["http://elasticsearch.elastic.svc.cluster.local:9200"]
+          index => "belt-predictions"
+        }
       }
+
       stdout { codec => rubydebug }
     }
 
@@ -57,7 +70,14 @@ spec:
     spec:
       containers:
         - name: logstash
-          image: docker.elastic.co/logstash/logstash:8.11.1
+          image: docker.elastic.co/logstash/logstash:8.12.2
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"
           env:
             - name: LS_JAVA_OPTS
               value: "-Xms256m -Xmx256m"
@@ -70,3 +90,16 @@ spec:
         - name: config
           configMap:
             name: logstash-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  namespace: elastic
+spec:
+  selector:
+    app: logstash
+  ports:
+    - port: 5044
+      targetPort: 5044
+  type: ClusterIP

@@ -5,7 +5,7 @@ import os
 import logging
 import time
 from kafka import KafkaConsumer, KafkaProducer
-from app.runtime import MLRuntime
+from app.runtime import RuntimeEngine
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -23,7 +23,7 @@ def main():
 
     # Initialize ML Runtime (Loads models into memory ~1GB)
     try:
-        runtime = MLRuntime()
+        runtime = RuntimeEngine()
         logger.info("ML Models loaded successfully.")
     except Exception as e:
         logger.error(f"Failed to load ML models: {e}")
@@ -48,6 +48,8 @@ def main():
     # Initialize Kafka Producer
     producer = KafkaProducer(
         bootstrap_servers=bootstrap_servers,
+        acks="all",
+        retries=5,
         value_serializer=lambda x: json.dumps(x).encode('utf-8')
     )
 
@@ -59,7 +61,9 @@ def main():
             logger.debug(f"Received event from belt: {raw_event.get('belt_id')}")
 
             # Process using ML Runtime
-            result = runtime.process(raw_event)
+            result = runtime.process_event(raw_event)
+            if result is None:
+                continue
 
             # Replicate key-based partitioning (use belt_id as key)
             key = raw_event.get("belt_id", "GLOBAL").encode('utf-8')

@@ -1,148 +1,282 @@
-# app/feature_engineering.py
+"""
+Streaming Feature Builder
+Creates runtime features from state buffers (real-time).
+"""
+
+from __future__ import annotations
 
 import logging
+
 import numpy as np
-from typing import Dict, Any, List
-from app.state_manager import StateManager
 
 logger = logging.getLogger(__name__)
 
-class FeatureEngineer:
-    def __init__(self, thresholds: Dict[str, Any], model_config: Dict[str, Any]):
-        self.thresholds = thresholds
-        self.required_features = model_config.get("features", [])
-        self.sensor_warn_crit = thresholds.get("sensor_warning_critical", {})
-        
-        # Mapping base sensor IDs to their config names
-        self.sensor_map = {
-            "current_transducer": "current_transducer_head/current",
-            "temperature_boot_material": "temperature_boot_material/temperature",
-            "ultrasonic_boot": "ultrasonic_boot/elongation"
-        }
 
-    def derive_flags(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Compute warning and critical flags based on thresholds."""
-        flags = {}
-        sensor_id = event.get("sensorid")
-        val = event.get("avg_value", event.get("value"))
-        
-        if sensor_id in self.sensor_map:
-            cfg_name = self.sensor_map[sensor_id]
-            t_cfg = self.sensor_warn_crit.get(cfg_name, {})
+class FeatureBuilder:
+    def __init__(self, config_loader):
+        self.config_loader = config_loader
+        thresholds = config_loader.get_thresholds()
+
+        sensor_cfg = thresholds.get("sensor_thresholds", {})
+        baseline = thresholds.get("baseline_values", {})
+        ops = thresholds.get("operational_states", {})
+        idle = thresholds.get("idle_detection", {})
+
+        self.temp_key = "temperature_boot_material/temperature"
+        self.elong_key = "ultrasonic_boot/elongation"
+        self.current_key = "current_transducer_head/current"
+
+        tcfg = sensor_cfg.get(self.temp_key, {})
+        self.temp_warn = float(tcfg.get("warning", 90.0))
+        self.temp_critical = float(tcfg.get("critical", 100.0))
+
+        ecfg = sensor_cfg.get(self.elong_key, {})
+        self.elong_warn = float(ecfg.get("warning", 300.0))
+        self.elong_critical = float(ecfg.get("critical", 310.0))
+
+        ccfg = sensor_cfg.get(self.current_key, {})
+        self.current_warn = float(ccfg.get("warning", 62.0))
+        self.current_critical = float(ccfg.get("critical", 80.0))
+
+        self.baseline_elong = float(baseline.get("baseline_elongation", 280.0))
+        self.baseline_temp = float(baseline.get("baseline_temp_celsius", 60.0))
+
+        self.idle_current_threshold = float(idle.get("current_threshold", 4.5))
+        self.high_load_threshold = float(ops.get("high_load_threshold", 62.0))
+
+    def _safe_array(self, data):
+        if not data:
+            return np.array([], dtype=float)
+        return np.array(data, dtype=float)
+
+    def _mean(self, arr):
+        return float(np.mean(arr)) if len(arr) > 0 else 0.0
+
+    def _std(self, arr):
+        return float(np.std(arr)) if len(arr) > 1 else 0.0
+
+    def _min(self, arr):
+        return float(np.min(arr)) if len(arr) > 0 else 0.0
+
+    def _max(self, arr):
+        return float(np.max(arr)) if len(arr) > 0 else 0.0
+
+    def _trend(self, arr):
+        if len(arr) < 2:
+            return 0.0
+        x = np.arange(len(arr))
+        return float(np.polyfit(x, arr, 1)[0])
+
+    def _rate(self, arr):
+        if len(arr) < 2:
+            return 0.0
+        return float((arr[-1] - arr[0]) / max(len(arr) - 1, 1))
+
+    def _accel(self, arr):
+        if len(arr) < 3:
+            return 0.0
+        # Simple acceleration: mean of change in trend over 6h vs 1h
+        return 0.0 # Placeholder for complex accel if needed
+
+    def build(self, state):
+        try:
+            temp_arr = self._safe_array(state["temperature"])
+            elong_arr = self._safe_array(state["elongation"])
+            current_arr = self._safe_array(state["current"])
+
+            if len(temp_arr) == 0 or len(elong_arr) == 0 or len(current_arr) == 0:
+                return None
+
+            temp = float(temp_arr[-1])
+            elong = float(elong_arr[-1])
+            current = float(current_arr[-1])
+
+            # Buffers
+            temp_1h = temp_arr[-60:]
+            elong_1h = elong_arr[-60:]
+            curr_1h = current_arr[-60:]
+
+            temp_6h = temp_arr[-360:]
+            elong_6h = elong_arr[-360:]
+            curr_6h = current_arr[-360:]
+
+            temp_12h = temp_arr[-720:]
+            elong_12h = elong_arr[-720:]
+            curr_12h = current_arr[-720:]
+
+            temp_24h = temp_arr[-1440:]
+            elong_24h = elong_arr[-1440:]
+            curr_24h = current_arr[-1440:]
+
+            features = {}
+
+            # Base
+            features["current_transducer_head/current_avg"] = current
+            features["temperature_boot_material/temperature_avg"] = temp
+            features["ultrasonic_boot/elongation_avg"] = elong
+
+            # 1h stats
+            features["temperature_boot_material/temperature_1h_mean"] = self._mean(temp_1h)
+            features["temperature_boot_material/temperature_1h_std"] = self._std(temp_1h)
+            features["temperature_boot_material/temperature_1h_min"] = self._min(temp_1h)
+            features["temperature_boot_material/temperature_1h_max"] = self._max(temp_1h)
+
+            features["ultrasonic_boot/elongation_1h_mean"] = self._mean(elong_1h)
+            features["ultrasonic_boot/elongation_1h_std"] = self._std(elong_1h)
+            features["ultrasonic_boot/elongation_1h_min"] = self._min(elong_1h)
+            features["ultrasonic_boot/elongation_1h_max"] = self._max(elong_1h)
+
+            features["current_transducer_head/current_1h_mean"] = self._mean(curr_1h)
+            features["current_transducer_head/current_1h_std"] = self._std(curr_1h)
+            features["current_transducer_head/current_1h_min"] = self._min(curr_1h)
+            features["current_transducer_head/current_1h_max"] = self._max(curr_1h)
+
+            # 6h stats
+            features["temperature_boot_material/temperature_6h_mean"] = self._mean(temp_6h)
+            features["temperature_boot_material/temperature_6h_std"] = self._std(temp_6h)
+            features["temperature_boot_material/temperature_6h_min"] = self._min(temp_6h)
+            features["temperature_boot_material/temperature_6h_max"] = self._max(temp_6h)
+
+            features["ultrasonic_boot/elongation_6h_mean"] = self._mean(elong_6h)
+            features["ultrasonic_boot/elongation_6h_std"] = self._std(elong_6h)
+            features["ultrasonic_boot/elongation_6h_min"] = self._min(elong_6h)
+            features["ultrasonic_boot/elongation_6h_max"] = self._max(elong_6h)
+
+            features["current_transducer_head/current_6h_mean"] = self._mean(curr_6h)
+            features["current_transducer_head/current_6h_std"] = self._std(curr_6h)
+            features["current_transducer_head/current_6h_min"] = self._min(curr_6h)
+            features["current_transducer_head/current_6h_max"] = self._max(curr_6h)
+
+            # 12h stats
+            features["temperature_boot_material/temperature_12h_mean"] = self._mean(temp_12h)
+            features["temperature_boot_material/temperature_12h_std"] = self._std(temp_12h)
+            features["temperature_boot_material/temperature_12h_min"] = self._min(temp_12h)
+            features["temperature_boot_material/temperature_12h_max"] = self._max(temp_12h)
+
+            features["ultrasonic_boot/elongation_12h_mean"] = self._mean(elong_12h)
+            features["ultrasonic_boot/elongation_12h_std"] = self._std(elong_12h)
+            features["ultrasonic_boot/elongation_12h_min"] = self._min(elong_12h)
+            features["ultrasonic_boot/elongation_12h_max"] = self._max(elong_12h)
+
+            features["current_transducer_head/current_12h_mean"] = self._mean(curr_12h)
+            features["current_transducer_head/current_12h_std"] = self._std(curr_12h)
+            features["current_transducer_head/current_12h_min"] = self._min(curr_12h)
+            features["current_transducer_head/current_12h_max"] = self._max(curr_12h)
+
+            # 24h stats
+            features["temperature_boot_material/temperature_24h_mean"] = self._mean(temp_24h)
+            features["temperature_boot_material/temperature_24h_std"] = self._std(temp_24h)
+            features["temperature_boot_material/temperature_24h_min"] = self._min(temp_24h)
+            features["temperature_boot_material/temperature_24h_max"] = self._max(temp_24h)
+
+            features["ultrasonic_boot/elongation_24h_mean"] = self._mean(elong_24h)
+            features["ultrasonic_boot/elongation_24h_std"] = self._std(elong_24h)
+            features["ultrasonic_boot/elongation_24h_min"] = self._min(elong_24h)
+            features["ultrasonic_boot/elongation_24h_max"] = self._max(elong_24h)
+
+            features["current_transducer_head/current_24h_mean"] = self._mean(curr_24h)
+            features["current_transducer_head/current_24h_std"] = self._std(curr_24h)
+            features["current_transducer_head/current_24h_min"] = self._min(curr_24h)
+            features["current_transducer_head/current_24h_max"] = self._max(curr_24h)
+
+            # Ops/state
+            features["is_idle"] = int(current < self.idle_current_threshold)
+            features["high_load"] = int(current >= self.high_load_threshold)
             
-            warn = t_cfg.get("warning")
-            crit = t_cfg.get("critical")
+            active_flags = (curr_1h >= self.idle_current_threshold).astype(int)
+            features["utilization_1h"] = float(np.mean(active_flags)) if len(active_flags) > 0 else 0.0
             
-            if warn is not None:
-                flags[f"{sensor_id}_warning"] = int(val >= warn)
-            if crit is not None:
-                flags[f"{sensor_id}_critical"] = int(val >= crit)
-        
-        return flags
+            active_flags_6h = (curr_6h >= self.idle_current_threshold).astype(int)
+            features["utilization_6h"] = float(np.mean(active_flags_6h)) if len(active_flags_6h) > 0 else 0.0
+            
+            high_load_flags_6h = (curr_6h >= self.high_load_threshold).astype(int)
+            features["high_load_share_6h"] = float(np.mean(high_load_flags_6h)) if len(high_load_flags_6h) > 0 else 0.0
 
-    def process_event(self, event: Dict[str, Any], state_manager: StateManager) -> Dict[str, float]:
-        """
-        Main entry for streaming feature engineering.
-        Updates state and returns the full feature dictionary.
-        """
-        belt_id = event.get("belt_id")
-        sensor_id = event.get("sensorid")
-        val = float(event.get("avg_value", event.get("value", 0.0)))
-        
-        # 1. Update rolling buffer in state
-        if sensor_id in ["current_transducer", "temperature_boot_material", "ultrasonic_boot"]:
-            state_manager.update_buffer(belt_id, sensor_id, val)
-        
-        # 2. Increment operating hours if not idle
-        idle_thresh = self.thresholds.get("idle_detection", {}).get("current_threshold", 4.5)
-        is_idle = 0
-        if sensor_id == "current_transducer":
-            is_idle = int(val < idle_thresh)
-            if not is_idle:
-                state_manager.increment_operating_hours(belt_id)
-        
-        # 3. Build features
-        state = state_manager.get_state(belt_id)
-        features = {}
-        
-        # Current Value placeholders
-        features["current_transducer_head/current_avg"] = val if sensor_id == "current_transducer" else state.get("last_current", 0.0)
-        features["temperature_boot_material/temperature_avg"] = val if sensor_id == "temperature_boot_material" else state.get("last_temp", 0.0)
-        features["ultrasonic_boot/elongation_avg"] = val if sensor_id == "ultrasonic_boot" else state.get("last_elong", 0.0)
-        
-        # Update last seen values in state
-        if sensor_id == "current_transducer": state["last_current"] = val
-        if sensor_id == "temperature_boot_material": state["last_temp"] = val
-        if sensor_id == "ultrasonic_boot": state["last_elong"] = val
+            # Percentile
+            curr_720 = current_arr[-720:]
+            curr_span = self._max(curr_720) - self._min(curr_720)
+            features["current_percentile"] = (
+                float((current - self._min(curr_720)) / (curr_span + 1e-6) * 100.0)
+                if len(curr_720) > 0
+                else 0.0
+            )
 
-        # Rolling Stats (1h, 12h)
-        for sid, prefix in [("current_transducer", "current_transducer_head/current"), 
-                            ("temperature_boot_material", "temperature_boot_material/temperature"), 
-                            ("ultrasonic_boot", "ultrasonic_boot/elongation")]:
-            for window in [60, 720]:
-                w_name = f"{window // 60}h"
-                stats = state_manager.get_buffer_stats(belt_id, sid, window)
-                features[f"{prefix}_{w_name}_mean"] = stats["mean"]
-                features[f"{prefix}_{w_name}_std"] = stats["std"]
-                features[f"{prefix}_{w_name}_min"] = stats["min"]
-                features[f"{prefix}_{w_name}_max"] = stats["max"]
+            # Elongation degradation
+            features["elong_rate_12h"] = float(elong - elong_arr[-720]) if len(elong_arr) >= 720 else 0.0
+            features["elong_delta"] = float(elong - self.baseline_elong)
+            features["elong_delta_rate"] = float(elong - elong_arr[-60]) if len(elong_arr) >= 60 else 0.0
+            features["elong_trend_1h"] = self._trend(elong_1h)
+            features["elong_trend_6h"] = self._trend(elong_6h)
+            features["elong_trend_24h"] = self._trend(elong_24h)
+            features["elong_micro_trend"] = float(elong - elong_arr[-5]) if len(elong_arr) >= 5 else 0.0
+            features["elong_accel_6h"] = float(features["elong_trend_1h"] - features["elong_trend_6h"])
+            features["elong_volatility_6h"] = self._std(elong_6h)
+            
+            # Degradation Index (Same formula as source)
+            elong_span = 30.0 # critical (310) - baseline (280)
+            delta_norm = np.clip(features["elong_delta"] / elong_span, 0.0, 2.0)
+            trend_norm = np.clip(features["elong_trend_6h"] / 0.03, 0.0, 2.0)
+            vol_norm = np.clip(features["elong_volatility_6h"] / 6.0, 0.0, 2.0)
+            features["degradation_index"] = float(np.clip(
+                0.55 * delta_norm + 0.30 * trend_norm + 0.15 * vol_norm,
+                0.0,
+                2.0,
+            ))
+            features["degradation_rising_flag"] = int(
+                features["elong_trend_6h"] > 0.01 or features["elong_accel_6h"] > 0.005
+            )
 
-        # Operational/Degradation
-        features["is_idle"] = is_idle
-        features["operating_hours"] = state.get("operating_hours", 0.0)
-        
-        # Simplified versions of complex features for streaming
-        features["high_load"] = int(features["current_transducer_head/current_avg"] >= 62.0)
-        features["current_percentile"] = 50.0 # Placeholder or compute from buffer
-        
-        # Elongation Deltas
-        baseline_elong = self.thresholds.get("baseline_values", {}).get("baseline_elongation", 280.0)
-        features["elong_delta"] = features["ultrasonic_boot/elongation_avg"] - baseline_elong
-        
-        # Trends
-        for sid, feat_prefix in [("ultrasonic_boot", "elong"), ("temperature_boot_material", "temp")]:
-            for w in [60, 360, 1440]:
-                w_name = f"{w//60}h" if w >= 60 else f"{w}m"
-                # For streaming, we can't do perfect diff(60) without indexed state
-                # We'll use (current - mean_of_buffer) or similar as a proxy if buffer is small
-                # But here I'll try to get the actual oldest value if possible
-                buffer = state.get("rolling_buffers", {}).get(sid, [])
-                if len(buffer) >= w:
-                    old_val = buffer[0] if len(buffer) == w else buffer[-w]
-                    features[f"{feat_prefix}_trend_{w_name}"] = (val - old_val) / float(w)
-                else:
-                    features[f"{feat_prefix}_trend_{w_name}"] = 0.0
+            # Current/temp
+            features["current_volatility_6h"] = self._std(curr_6h)
+            features["temp_above_baseline"] = float(max(0.0, temp - self.baseline_temp))
+            features["temp_variability_12h"] = self._std(temp_12h)
+            features["temp_trend_1h"] = self._trend(temp_1h)
+            features["temp_trend_6h"] = self._trend(temp_6h)
+            features["temp_trend_24h"] = self._trend(temp_24h)
+            features["temp_spike_index"] = float(np.clip(
+                (features["temp_above_baseline"] / 20.0) + (features["temp_variability_12h"] / 8.0),
+                0.0,
+                3.0,
+            ))
 
-        # Degradation Index (Logic from fusion-model/ml_model/feature_engineering.py)
-        delta_norm = np.clip(features["elong_delta"] / 30.0, 0.0, 2.0)
-        trend_norm = np.clip(features.get("elong_trend_6h", 0.0) / 0.03, 0.0, 2.0)
-        features["degradation_index"] = 0.55 * delta_norm + 0.30 * trend_norm
-        features["degradation_rising_flag"] = int(features.get("elong_trend_6h", 0.0) > 0.01)
+            # Interaction
+            features["temp_elong_coupling"] = float(np.clip(
+                (features["temp_above_baseline"] / 25.0) * trend_norm,
+                0.0,
+                3.0,
+            ))
+            features["temp_elong_interaction"] = float(features["temp_above_baseline"] * max(features["elong_delta"], 0.0))
+            features["temp_elong_risk_flag"] = int(
+                features["temp_above_baseline"] >= 15.0 and features["elong_trend_6h"] > 0.01
+            )
 
-        # Thermal Features
-        features["temp_above_baseline"] = max(features["temperature_boot_material/temperature_avg"] - 60.0, 0.0)
-        features["temp_variability_12h"] = features.get("temperature_boot_material/temperature_12h_std", 0.0)
-        features["temp_spike_index"] = features["temp_above_baseline"] / 20.0
-        
-        # Threshold Flags
-        flags = self.derive_flags(event)
-        features["temp_warning"] = flags.get("temperature_boot_material_warning", 0)
-        features["temp_critical"] = flags.get("temperature_boot_material_critical", 0)
-        features["elong_warning"] = flags.get("ultrasonic_boot_warning", 0)
-        features["elong_critical"] = flags.get("ultrasonic_boot_critical", 0)
-        features["current_warning"] = flags.get("current_transducer_warning", 0)
-        features["current_critical"] = flags.get("current_transducer_critical", 0)
-        
-        features["warning_count"] = sum([features["temp_warning"], features["elong_warning"], features["current_warning"]])
-        features["critical_count"] = sum([features["temp_critical"], features["elong_critical"], features["current_critical"]])
+            # Thresholds
+            features["temp_warning"] = int(temp >= self.temp_warn)
+            features["temp_critical"] = int(temp >= self.temp_critical)
+            features["elong_warning"] = int(elong >= self.elong_warn)
+            features["elong_critical"] = int(elong >= self.elong_critical)
+            features["current_warning"] = int(current >= self.current_warn)
+            features["current_critical"] = int(current >= self.current_critical)
 
-        # Fill missing with 0.0
-        for f in self.required_features:
-            if f not in features:
-                features[f] = 0.0
-                
-        return features
+            features["warning_count"] = int(
+                features["temp_warning"] + features["elong_warning"] + features["current_warning"]
+            )
+            features["critical_count"] = int(
+                features["temp_critical"] + features["elong_critical"] + features["current_critical"]
+            )
+            
+            # Proximity and Trigger
+            features["failure_proximity"] = float(np.clip(
+                features["degradation_index"] + 0.5 * features["critical_count"] + 0.2 * features["warning_count"],
+                0.0,
+                5.0,
+            ))
+            features["failure_trigger"] = int(
+                features["critical_count"] >= 2 and features["degradation_index"] >= 0.8
+            )
 
-    def get_ordered_vector(self, feature_dict: Dict[str, float]) -> np.ndarray:
-        vector = [feature_dict.get(f, 0.0) for f in self.required_features]
-        return np.array(vector).reshape(1, -1)
+            return features
+
+        except Exception as e:
+            logger.exception("Feature build failed: %s", e)
+            return None

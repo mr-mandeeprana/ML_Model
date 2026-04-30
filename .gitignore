@@ -168,7 +168,16 @@ cython_debug/
 *.joblib
 *.npy
 *.npz
-models/
 datasets/
-data/
 *.csv
+
+# Keep ML artifact folder structure without committing generated artifacts.
+**/data/*
+!**/data/**/
+!**/data/**/.gitkeep
+**/model/*
+!**/model/**/
+!**/model/**/.gitkeep
+**/models/*
+!**/models/**/
+!**/models/**/.gitkeep
